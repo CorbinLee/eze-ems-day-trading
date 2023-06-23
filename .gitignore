@@ -1,0 +1,6 @@
+.env
+logs/
+Realtick_API_project_notes
+protos/
+.idea
+__pycache__/

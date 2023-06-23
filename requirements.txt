@@ -1,0 +1,7 @@
+holidays
+python-dotenv
+pytz
+grpcio == 1.46.0
+grpcio-tools == 1.46.0
+protobuf == 3.20.1
+pandas
