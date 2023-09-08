@@ -131,12 +131,11 @@ def get_order_id(util_stub, user_token, order_tag):
     return order_id
 
 
-def get_order_details(util_stub, request, order_tag) -> (bool, dict):
+def get_order_details(util_stub, request, order_tag, retry_count=5) -> (bool, dict):
     """
     Gets orders placed today that match the given order_tag
     :return: List of order details for all orders matching the given order_tag
     """
-    retry_count = 5
     for i in range(retry_count):
         with lock:
             activity_response = util_stub.GetTodaysActivityJson(request)
@@ -188,10 +187,7 @@ def get_exchange_trade_order_details(util_stub, user_token, order_tag) -> (bool,
 
 
 def submit_order(ord_stub, util_stub, symbol, side, quantity, route, account, order_tag, price_type, user_token,
-                 closing_order, limit_price=None, stop_price=None) -> (bool, dict):
-    # Safeguard
-    # if symbol != 'ZVZZT':
-    #     raise Exception('Calling order on non test stock: {}'.format(symbol))
+                 closing_order, limit_price=None, stop_price=None, retry_count=5) -> (bool, dict):
 
     # todo dont even make the call if it has invalid params
     if price_type == 'Limit' or price_type == 'StopLimit':
@@ -232,7 +228,6 @@ def submit_order(ord_stub, util_stub, symbol, side, quantity, route, account, or
         order_request.ExtendedFields['SHORT_LOCATE_ID'] = order_tag
     logging.info(f'Submitting {side} {price_type} order (OrderTag={order_tag}) for {quantity} shares of {symbol}')
     # order_response = ord_stub.SubmitSingleOrder(order_request)
-    retry_count = 5
     for i in range(retry_count):
         with lock:
             logging.info(f'lock acquired')
@@ -372,8 +367,7 @@ def get_order_status(ord_stub, user_token, order_id):
 #             time.sleep(delay_millis / 1000)
 
 
-def get_current_stock_price(md_stub, user_token, symbol) -> (bool, float):
-    retry_count = 5
+def get_current_stock_price(md_stub, user_token, symbol, retry_count=5) -> (bool, float):
     for i in range(retry_count):
         with lock:
             md_response = md_stub.GetLevel1MarketData(md.Level1MarketDataRequest(
@@ -397,7 +391,7 @@ def moving_in_correct_direction(current_price, entry_price, direction):
     elif direction == OrderDirection.SHORT:
         return current_price > entry_price
     else:
-        raise RuntimeError('No moving_in_correct_direction implementation for order direction: {}'.format(direction))
+        raise RuntimeError(f'No moving_in_correct_direction implementation for order direction: {direction}')
 
 
 def adjust_entry_price(entry_price, direction):
@@ -407,7 +401,7 @@ def adjust_entry_price(entry_price, direction):
     elif direction == OrderDirection.SHORT:
         return entry_price + price_offset
     else:
-        raise RuntimeError('No adjust_entry_price implementation for order direction: {}'.format(direction))
+        raise RuntimeError(f'No adjust_entry_price implementation for order direction: {direction}')
 
 
 def at_or_better_than(current_price, compare_price, direction):
@@ -416,7 +410,7 @@ def at_or_better_than(current_price, compare_price, direction):
     elif direction == OrderDirection.SHORT:
         return current_price <= compare_price
     else:
-        raise RuntimeError('No at_or_better_than implementation for order direction: {}'.format(direction))
+        raise RuntimeError(f'No at_or_better_than implementation for order direction: {direction}')
 
 
 def at_or_worse_than(current_price, compare_price, direction):
@@ -425,12 +419,82 @@ def at_or_worse_than(current_price, compare_price, direction):
     elif direction == OrderDirection.SHORT:
         return current_price >= compare_price
     else:
-        raise RuntimeError('No at_or_worse_than implementation for order direction: {}'.format(direction))
+        raise RuntimeError(f'No at_or_worse_than implementation for order direction: {direction}')
+
+
+def log_heartbeat(md_stub, util_stub, user_token, order, entry_order_executed):
+    heartbeat_string = f'Heartbeat for symbol [{order.symbol}]:\n'
+    # Get current market data for symbol
+    success, current_price = get_current_stock_price(md_stub, user_token, order.symbol)
+    if success:
+        heartbeat_string += f'Last traded price for {order.symbol}: {current_price}\n'
+    else:
+        heartbeat_string += f'Failed to get last traded price for {order.symbol}\n'
+        logging.warning(f'Failed to get current stock price for symbol [{order.symbol}] while generating '
+                        f'heartbeat')
+    if order.order_tag:
+        heartbeat_string += \
+            f'Entry order has been submitted {"and" if entry_order_executed else "but not"} executed ' \
+            f'with order ID: {order.order_id}\n'
+        if entry_order_executed:
+            success, entry_order_details = get_exchange_trade_order_details(util_stub, user_token,
+                                                                            order.order_tag)
+        else:
+            success, entry_order_details = get_user_submit_order_details(util_stub, user_token,
+                                                                         order.order_tag)
+        if success:
+            heartbeat_string += f'Entry order details: {entry_order_details}\n'
+        else:
+            heartbeat_string += f'Failed to get entry order details\n'
+            logging.warning(f'Failed to get entry_order_details for symbol [{order.symbol}] while '
+                            f'generating heartbeat. Response: {entry_order_details}')
+    else:
+        heartbeat_string += 'Entry order has not been submitted yet\n'
+    if order.closing_order_tag:
+        success, closing_order_details = get_user_submit_order_details(util_stub, user_token,
+                                                                       order.closing_order_tag)
+        heartbeat_string += f'Closing order has been submitted with order ID: {order.closing_order_id}\n'
+        if success:
+            heartbeat_string += f'Closing order details: {closing_order_details}\n'
+        else:
+            heartbeat_string += f'Failed to get closing order details\n'
+            logging.warning(f'Failed to get closing_order_details for symbol [{order.symbol}] while '
+                            f'generating heartbeat. Response: {closing_order_details}')
+    else:
+        heartbeat_string += f'Closing order has not been submitted yet\n'
+    heartbeat_string += f'Order object: {order}\n'  # Todo: remove when testing is done as this isn't important to user
+    logging.info(heartbeat_string)
+
+
+def order_sanity_check(order):
+    comparison_str = 'less than' if order.direction == OrderDirection.LONG else 'greater than'
+    if (order.direction == OrderDirection.LONG and not order.stop_loss_price < order.entry_price < order.half_target < order.near_target < order.target_price) or \
+            (order.direction == OrderDirection.SHORT and not order.stop_loss_price > order.entry_price > order.half_target > order.near_target > order.target_price):
+        logging.error(
+            f'{order.direction} order for [{order.symbol}] has invalid prices: stop_loss_price '
+            f'[{order.stop_loss_price}] should be {comparison_str} entry_price [{order.entry_price}] which should be '
+            f'{comparison_str} half_target [{order.half_target}] which should be {comparison_str} near_target '
+            f'[{order.near_target}] which should be {comparison_str} target_price [{order.target_price}]')
+        raise RuntimeError(f'Prices for [{order.symbol}] order are invalid. Order details: {order}')
+    if order.entry_limit and ((order.direction == OrderDirection.LONG and not order.entry_price < order.entry_limit) or
+                              (order.direction == OrderDirection.SHORT and not order.entry_price > order.entry_limit)):
+        logging.error(f'{order.direction} order for [{order.symbol}] has invalid entry limit price: entry_price '
+                      f'[{order.entry_price}] should be {comparison_str} entry_limit [{order.entry_limit}]')
+        raise RuntimeError(f'Entry price for [{order.symbol}] order is invalid. Order details: {order}')
+    if order.direction not in [OrderDirection.LONG, OrderDirection.SHORT]:
+        raise RuntimeError(f'No order_sanity_check implementation for order direction: {order.direction}')
 
 
 def handle_order(channel, user_token, order):
     try:
+        # Change thread name to include stock symbol
+        threading.current_thread().name = f'Thread-{order.symbol}'
+
+        # Sanity check to make sure orders have prices setup correctly
+        order_sanity_check(order)
+
         entry_order_executed = False
+        stop_loss_order_submitted = False
         new_entry = None
         keep_going = True
         # Stubs
@@ -446,6 +510,16 @@ def handle_order(channel, user_token, order):
         logging.info(f'Starting processing for order: {order}')
 
         while keep_going:
+            now_est = datetime.datetime.now(est_timezone)
+
+            # Log heartbeat every X minutes giving update on current status
+            if last_heartbeat is None or now_est >= last_heartbeat + datetime.timedelta(minutes=5):
+                log_heartbeat(md_stub, util_stub, user_token, order, entry_order_executed)
+                last_heartbeat = now_est
+
+            # Safety check todo implement to check for multiple open entry or closing orders. Consider putting before submit_order call so api calls are limited
+            # check_for_errors()
+
             # If closing order has been entered, check if it has completed
             if order.closing_order_tag:
                 success, closing_order_details = get_user_submit_order_details(util_stub, user_token,
@@ -456,11 +530,10 @@ def handle_order(channel, user_token, order):
                     time.sleep(5)
                 elif closing_order_details['CurrentStatus'].upper() == 'COMPLETED':
                     logging.info(f'Closing order {order.closing_order_id} has completed for symbol {order.symbol}. '
-                                 f'Finished all processing for this order')
+                                 f'Finished all processing for this order. Exiting...')
                     break
 
             # Check time
-            now_est = datetime.datetime.now(est_timezone)
             market_open = datetime.datetime(year=now_est.year, month=now_est.month, day=now_est.day, hour=9, minute=30,
                                             second=0, tzinfo=now_est.tzinfo)
             market_close = datetime.datetime(year=now_est.year, month=now_est.month, day=now_est.day, hour=16, minute=0,
@@ -479,9 +552,9 @@ def handle_order(channel, user_token, order):
                     time.sleep(seconds_til_open)
                     continue
                 else:
-                    logging.info('Market has closed for the day. Try again tomorrow')
+                    logging.info('Market has closed for the day. Try again tomorrow...')
                     break
-            elif now_est.time() > datetime.time(hour=15, minute=59, second=25) and not entry_order_executed: # Fixme rest to 3pm
+            elif now_est.time() > datetime.time(hour=15, minute=40, second=0) and not entry_order_executed: # Fixme rest to 3pm
                 logging.info('Reached 3pm EST without entry order executing')
                 if order.order_tag:
                     # Cancel entry order
@@ -495,7 +568,7 @@ def handle_order(channel, user_token, order):
                 else:
                     logging.info('Entry order has not been submitted. Exiting...')
                 break
-            elif now_est.time() > datetime.time(hour=15, minute=59, second=30):
+            elif now_est.time() > datetime.time(hour=15, minute=50, second=0):
                 logging.info('Reached 3:50pm ET and the entry order has been executed but potentially not closed out')
                 # Check for any open orders
                 if order.closing_order_tag:
@@ -503,12 +576,12 @@ def handle_order(channel, user_token, order):
                                                                                    order.closing_order_tag)
                     if success:
                         if closing_order_details['CurrentStatus'].upper() != 'COMPLETED':
-                            logging.info(f'Cancelling order {order.closing_order_id} as it is 3:50pm and it is in '
-                                         f'status: {closing_order_details["CurrentStatus"]}')
+                            logging.info(f'Cancelling closing order [{order.closing_order_id}] as it is 3:50pm and it '
+                                         f'is in status: {closing_order_details["CurrentStatus"]}')
                         else:
                             # Closing order has completed so no further orders are needed
                             logging.info(f'Closing order has executed (details={closing_order_details})\nEnding '
-                                         f'processing for symbol: {order.symbol}')
+                                         f'processing for symbol: {order.symbol}...')
                             break
                     else:
                         logging.info(f'Failed to get closing order details. Server response: {closing_order_details}')
@@ -517,8 +590,9 @@ def handle_order(channel, user_token, order):
                                                    order_id=order.closing_order_id)
                     if cancel_response.ServerResponse == 'success':
                         logging.info(f'Successfully cancelled order: {order.closing_order_id}')
+                        order.closing_order_tag = None
                     else:
-                        logging.warning(f'Failed to cancel order: {order.closing_order_id}. Please address')
+                        logging.warning(f'Failed to cancel order: {order.closing_order_id}. Please address manually!')
                 side = 'SELL' if order.direction == OrderDirection.LONG else 'BUY'
                 price_type = 'Market'
                 logging.info(f'3:50pm reached and order for {order.symbol} has not closed out yet. Sending {side} '
@@ -527,17 +601,15 @@ def handle_order(channel, user_token, order):
                 success, order_response = submit_order(
                     ord_stub=ord_stub, util_stub=util_stub, symbol=order.symbol, side=side, quantity=order.quantity,
                     route=order.route, account=order.account, order_tag=order.closing_order_tag, price_type=price_type,
-                    user_token=user_token, closing_order=True)
+                    user_token=user_token, closing_order=True, retry_count=7)
                 if success:
                     logging.info(f'EOD closing order successfully submitted. Order details: {order_response}. Since '
-                                 f'this is the final trade to make for the day, Processing for {order.symbol} is done. '
+                                 f'this is the final trade to make for the day, processing for {order.symbol} is done. '
                                  f'Exiting...')
-                    break
                 else:
-                    order.closing_order_tag = None
                     logging.warning(f'EOD closing order failed to submit with order response: {order_response}. '
-                                    f'Waiting 10 seconds before retrying...')
-                    time.sleep(10)
+                                    f'Please address manually! Exiting...')
+                break
 
             # If entry order is entered but not executed: wait
             if order.order_tag and not entry_order_executed:
@@ -549,8 +621,9 @@ def handle_order(channel, user_token, order):
                 # Check on order status
                 elif entry_order_details['CurrentStatus'].upper() == 'COMPLETED':
                     entry_order_executed = True
-                    logging.info(f'Entry order has executed. Order details: {entry_order_details}')
+                    logging.info(f'Entry order has executed for [{order.symbol}]. Order details: {entry_order_details}')
                 else:
+                    # Wait a bit between API calls
                     time.sleep(3)
             else:
                 # Get current market data for symbol
@@ -576,7 +649,7 @@ def handle_order(channel, user_token, order):
                             user_token=user_token, closing_order=False, limit_price=order.entry_limit,
                             stop_price=order.entry_price)
                         if success:
-                            logging.info(f'Entry order succeeded with order details: {order_response}')
+                            logging.info(f'Entry order successfully submitted with order details: {order_response}')
                             if order_response:
                                 order.order_id = order_response['OrderId']
                         else:
@@ -589,20 +662,22 @@ def handle_order(channel, user_token, order):
                                      f'{order.direction} trade so we adjust entry to be {new_entry}')
                 # If entry order is entered and executed:
                 else:
-                    # If price is target or better: enter limit trade to close out
-                    if at_or_better_than(current_price, order.target_price, order.direction):
+                    # If price is target or better and no closing trade has been entered: enter limit trade to close out
+                    if at_or_better_than(current_price, order.target_price, order.direction) \
+                            and not order.closing_order_tag:
                         side = 'SELL' if order.direction == OrderDirection.LONG else 'BUY'
                         price_type = 'Limit'
-                        logging.info(f'Target price of {order.target_price} reached for {order.symbol}. Sending {side}'
-                                     f'{price_type} order to close out.')
+                        logging.info(f'Target price of {order.target_price} reached for {order.symbol} (current price: '
+                                     f'{current_price}). Sending {side} {price_type} order to close out.')
                         order.closing_order_tag = str(uuid.uuid4())
                         success, order_response = submit_order(
-                            ord_stub=ord_stub, util_stub=util_stub, symbol=order.symbol, side=side, quantity=order.quantity,
-                            route=order.route, account=order.account, order_tag=order.closing_order_tag,
-                            price_type=price_type, user_token=user_token, closing_order=True,
-                            limit_price=order.target_price)
+                            ord_stub=ord_stub, util_stub=util_stub, symbol=order.symbol, side=side,
+                            quantity=order.quantity, route=order.route, account=order.account,
+                            order_tag=order.closing_order_tag, price_type=price_type, user_token=user_token,
+                            closing_order=True, limit_price=order.target_price)
                         if success:
-                            logging.info(f'Closing order at target succeeded with order details: {order_response}')
+                            logging.info(f'Closing order at target successfully submitted with order details: '
+                                         f'{order_response}')
                             if order_response:
                                 order.closing_order_id = order_response['OrderId']
                         else:
@@ -612,18 +687,22 @@ def handle_order(channel, user_token, order):
                     # If price is $0.10 or better: Change stop-loss price to 50%
                     elif at_or_better_than(current_price, order.near_target, order.direction) \
                             and not at_or_better_than(order.stop_loss_price, order.half_target, order.direction):
-                        logging.info(f'{order.symbol} has reached near_target price of {order.near_target}. Setting '
-                                     f'stop_loss_price to {order.half_target}')
+                        logging.info(f'{order.symbol} has reached near_target price of {order.near_target} (current '
+                                     f'price: {current_price}). Setting stop_loss_price to half_target price of: '
+                                     f'{order.half_target}')
                         order.stop_loss_price = order.half_target
                     # If price is 50% or better: Change stop-loss price to entry price
                     elif at_or_better_than(current_price, order.half_target, order.direction) \
                             and not at_or_better_than(order.stop_loss_price, order.entry_price, order.direction):
-                        logging.info(f'{order.symbol} has reached half_target price of {order.half_target}. Setting '
-                                     f'stop_loss_price to {order.entry_price}')
+                        logging.info(f'{order.symbol} has reached half_target price of {order.half_target} (current '
+                                     f'price: {current_price}). Setting stop_loss_price to entry price of: '
+                                     f'{order.entry_price}')
                         order.stop_loss_price = order.entry_price
                     # If price is stop-loss or worse: Enter market or limit order to close out
-                    elif at_or_worse_than(current_price, order.stop_loss_price, order.direction):
-                        logging.info(f'Stop-loss price of {order.stop_loss_price} reached for {order.symbol}')
+                    elif at_or_worse_than(current_price, order.stop_loss_price, order.direction) \
+                            and not stop_loss_order_submitted:
+                        logging.info(f'Stop-loss price of {order.stop_loss_price} reached for {order.symbol} (current '
+                                     f'price: {current_price})')
                         # First check if there is an open closing order already. This can occur if target price was
                         # reached and a limit order was sent to close out at target, and then the price kept falling and
                         # the trade was never executed
@@ -634,68 +713,30 @@ def handle_order(channel, user_token, order):
                                                            order_id=order.closing_order_id)
                             if cancel_response.ServerResponse.upper() == 'SUCCESS':
                                 logging.info(f'Successfully cancelled order: {order.closing_order_id}')
+                                order.closing_order_tag = None
                             else:
-                                logging.warning(f'Failed to cancel order: {order.closing_order_id}. Please address')
+                                logging.warning(f'Failed to cancel order: {order.closing_order_id}. Please address!')
                         side = 'SELL' if order.direction == OrderDirection.LONG else 'BUY'
+                        # TODO Make default to Market, and limit only if entered
                         price_type = 'Limit' if order.stop_loss_order_type == OrderType.LIMIT else 'Market'
                         limit_price = order.stop_loss_price if order.stop_loss_order_type == OrderType.LIMIT else None
-                        logging.info(f'Stop-loss price of {order.stop_loss_price} reached for {order.symbol}. Sending '
-                                     f'{side} {price_type} order to close out')
+                        logging.info(f'Sending {side} {price_type} order to close out (at stop loss)')
                         order.closing_order_tag = str(uuid.uuid4())
                         success, order_response = submit_order(
-                            ord_stub=ord_stub, util_stub=util_stub, symbol=order.symbol, side=side, quantity=order.quantity,
-                            route=order.route, account=order.account, order_tag=order.closing_order_tag,
-                            price_type=price_type, user_token=user_token, closing_order=True, limit_price=limit_price)
+                            ord_stub=ord_stub, util_stub=util_stub, symbol=order.symbol, side=side,
+                            quantity=order.quantity, route=order.route, account=order.account,
+                            order_tag=order.closing_order_tag, price_type=price_type, user_token=user_token,
+                            closing_order=True, limit_price=limit_price)
                         if success:
-                            logging.info(f'Closing order at stop-loss succeeded with order details: {order_response}')
+                            logging.info(f'Closing order at stop-loss successfully submitted with order details: '
+                                         f'{order_response}')
+                            stop_loss_order_submitted = True
                             if order_response:
                                 order.closing_order_id = order_response['OrderId']
                         else:
                             order.closing_order_tag = None
                             logging.warning(f'Closing order at stop-loss failed to submit. Order response: '
                                             f'{order_response}')
-            # Log heartbeat every minute giving update on current status
-            if last_heartbeat is None or now_est >= last_heartbeat + datetime.timedelta(minutes=3):
-                heartbeat_string = f'Heartbeat for symbol [{order.symbol}]:\n'
-                # Get current market data for symbol
-                success, current_price = get_current_stock_price(md_stub, user_token, order.symbol)
-                if success:
-                    heartbeat_string += f'Last traded price for {order.symbol}: {current_price}\n'
-                else:
-                    logging.warning(f'Failed to get current stock price for symbol [{order.symbol}] while generating '
-                                    f'heartbeat')
-                if order.order_tag:
-                    heartbeat_string += \
-                        f'Entry order has been created {"and" if entry_order_executed else "but not"} executed ' \
-                        f'with order ID: {order.order_id}\n'
-                    if entry_order_executed:
-                        success, entry_order_details = get_exchange_trade_order_details(util_stub, user_token,
-                                                                                        order.order_tag)
-                    else:
-                        success, entry_order_details = get_user_submit_order_details(util_stub, user_token,
-                                                                                     order.order_tag)
-                    if success:
-                        heartbeat_string += f'Entry order details: {entry_order_details}\n'
-                    else:
-                        heartbeat_string += f'Failed to get entry order details\n'
-                        logging.warning(f'Failed to get entry_order_details for symbol [{order.symbol}] while '
-                                        f'generating heartbeat. Response: {entry_order_details}')
-                    if order.closing_order_tag:
-                        success, closing_order_details = get_user_submit_order_details(util_stub, user_token,
-                                                                                       order.closing_order_tag)
-                        if success:
-                            heartbeat_string += f'Closing order details: {entry_order_details}\n'
-                        else:
-                            heartbeat_string += f'Closing order submitted, but failed to fetch details\n'
-                            logging.warning(f'Failed to get closing_order_details for symbol [{order.symbol}] while '
-                                            f'generating heartbeat. Response: {closing_order_details}')
-                    else:
-                        heartbeat_string += f'Closing order has not been created yet\n'
-                else:
-                    heartbeat_string += 'Entry order has not been created yet\n'
-                heartbeat_string += f'Order object: {order}\n'  # Todo: remove when testing is done as this isn't important to user
-                logging.info(heartbeat_string)
-                last_heartbeat = now_est
 
     except Exception as e:
         logging.exception(f'Exception occurred in thread [{threading.current_thread().name}] of type: '
@@ -707,16 +748,19 @@ def setup_test_orders(md_stub, user_token, order_info):
     for info in order_info:
         symbol = info[0]
         margin = info[1]
+        direction = info[2]
+        has_entry_limit = info[3]
         success, current_price = get_current_stock_price(md_stub, user_token, symbol)
-        entry_price = current_price + 0.02
-        stop_loss_price = entry_price - margin
-        target_price = entry_price + margin
+        entry_price = round(current_price + 0.02 if direction == OrderDirection.LONG else current_price - 0.02, 2)
+        stop_loss_price = round(entry_price - margin if direction == OrderDirection.LONG else current_price + margin, 2)
+        target_price = round(entry_price + margin if direction == OrderDirection.LONG else current_price - margin, 2)
         half_target = round((entry_price + target_price) / 2, 2)
         near_target = round((half_target + target_price) / 2, 2)
+        entry_limit = round((entry_price + half_target) / 2, 2) if has_entry_limit else None
         test_orders.append(
-            BracketOrder(route='DEMO', account='EMSTEST;EMSTEST;EMSUAT;XAPITEST001', symbol=symbol, quantity=3,
-                         direction=OrderDirection.LONG, entry_price=entry_price, stop_loss_price=stop_loss_price,
-                         target_price=target_price, entry_order_type=OrderType.MARKET, entry_limit=None,
+            BracketOrder(route='DEMO', account='EMSTEST;EMSTEST;APIDEMO;DEMO07', symbol=symbol, quantity=3,
+                         direction=direction, entry_price=entry_price, stop_loss_price=stop_loss_price,
+                         target_price=target_price, entry_limit=entry_limit,
                          half_target=half_target, near_target=near_target)
         )
     return test_orders
@@ -738,15 +782,15 @@ if __name__ == '__main__':
         cert = f.read()
     server = 'chixapi.taltrade.com'
     port = '9000'
-    channel = grpc.secure_channel(f'{server}:{port}', grpc.ssl_channel_credentials(root_certificates=cert))
-    logging.info(f'Channel: {channel}')
-    util_stub_main = util_grpc.UtilityServicesStub(channel)
+    main_channel = grpc.secure_channel(f'{server}:{port}', grpc.ssl_channel_credentials(root_certificates=cert))
+    logging.info(f'Channel: {main_channel}')
+    util_stub_main = util_grpc.UtilityServicesStub(main_channel)
 
     connect_response = None
     try:
         connect_response = login(util_stub=util_stub_main)
 
-        md_stub_main = md_grpc.MarketDataServiceStub(channel)
+        md_stub_main = md_grpc.MarketDataServiceStub(main_channel)
         # ord_stub_main = ord_grpc.SubmitOrderServiceStub(channel)
 
         # aapl_tag = str(uuid.uuid4())
@@ -783,8 +827,10 @@ if __name__ == '__main__':
 
         orders = setup_test_orders(md_stub_main, connect_response.UserToken, [
             # ['BRO', .20],
-            ['PFGC', .15],
-            ['CIEN', .10],
+            ['PFGC', .15, OrderDirection.LONG, True],
+            ['CIEN', .20, OrderDirection.LONG, False],
+            ['BF.B', .20, OrderDirection.SHORT, True],
+            ['OKE', .15, OrderDirection.SHORT, False],
         ])
 
         # order = BracketOrder(
@@ -805,7 +851,7 @@ if __name__ == '__main__':
         # if order_response.ServerResponse != 'success':
         #     logging.warning('Entry order failed to submit')
 
-        threads = [Thread(target=handle_order, args=(channel, connect_response.UserToken, order)) for order in orders]
+        threads = [Thread(target=handle_order, args=(main_channel, connect_response.UserToken, order)) for order in orders]
         for thread in threads:
             thread.start()
 

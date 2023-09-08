@@ -16,8 +16,7 @@ class BracketOrder:
     """Class representing a bracket order"""
 
     def __init__(self, route, account, symbol, quantity, direction, entry_price, stop_loss_price, target_price,
-                 entry_order_type=OrderType.LIMIT, stop_loss_order_type=OrderType.LIMIT, entry_limit=None,
-                 half_target=None, near_target=None):
+                 stop_loss_order_type=OrderType.LIMIT, entry_limit=None, half_target=None, near_target=None):
         """
         :param route: Route name as shown in Eze EMS (i.e.  ARCA-LS, NYSE-LS, etc.)
         :param account: Semi colon separated values that represent the account this trade is for (i.e. TAL;TEST;USER1;TRADE)
@@ -27,8 +26,7 @@ class BracketOrder:
         :param entry_price: Entry price to enter into the order at
         :param stop_loss_price: Stop loss price which will be the price at the bottom of the bracket order
         :param target_price: Target price which will be the price at the top of the bracket order
-        :param entry_limit: Limit price for the initial order
-        :param entry_order_type: Type of order to make for the entry order (LIMIT or MARKET)
+        :param entry_limit: Limit price for the entry order. If None, entry order will be at market price
         :param stop_loss_order_type: Type of order to make for the stop-loss order (LIMIT or MARKET)
         :param half_target: Optional parameter representing the first point where the stop-loss should be moved if
             reached, usually halfway between the entry and target prices
@@ -44,9 +42,10 @@ class BracketOrder:
         self.stop_loss_price = stop_loss_price
         self.target_price = target_price
         self.entry_limit = entry_limit
-        self.entry_order_type = entry_order_type
         self.stop_loss_order_type = stop_loss_order_type
+        # todo do math automaticlaly
         self.half_target = half_target
+        # todo do math automaticlaly $0.10 to target
         self.near_target = near_target
         # Unique tag used to identify this order
         self.order_tag = None
@@ -61,7 +60,7 @@ class BracketOrder:
         return f'BracketOrder(route={self.route},account={self.account},symbol={self.symbol},' \
                f'quantity={self.quantity},direction={self.direction},entry_price={self.entry_price},' \
                f'stop_loss_price={self.stop_loss_price},target_price={self.target_price},' \
-               f'entry_limit={self.entry_limit},entry_order_type={self.entry_order_type},' \
-               f'stop_loss_order_type={self.stop_loss_order_type},half_target={self.half_target},' \
-               f'near_target={self.near_target},order_tag={self.order_tag},order_id={self.order_id},' \
-               f'closing_order_tag={self.closing_order_tag},closing_order_id={self.closing_order_id})'
+               f'entry_limit={self.entry_limit},stop_loss_order_type={self.stop_loss_order_type},' \
+               f'half_target={self.half_target},near_target={self.near_target},order_tag={self.order_tag},' \
+               f'order_id={self.order_id},closing_order_tag={self.closing_order_tag},' \
+               f'closing_order_id={self.closing_order_id})'
