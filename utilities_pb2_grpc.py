@@ -79,6 +79,11 @@ class UtilityServicesStub(object):
                 request_serializer=utilities__pb2.TodaysActivityJsonRequest.SerializeToString,
                 response_deserializer=utilities__pb2.TodaysActivityJsonResponse.FromString,
                 )
+        self.HealthCheck = channel.unary_unary(
+                '/UtilityServices/HealthCheck',
+                request_serializer=utilities__pb2.HealthCheckRequest.SerializeToString,
+                response_deserializer=utilities__pb2.HealthCheckResponse.FromString,
+                )
 
 
 class UtilityServicesServicer(object):
@@ -162,6 +167,12 @@ class UtilityServicesServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def HealthCheck(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_UtilityServicesServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -229,6 +240,11 @@ def add_UtilityServicesServicer_to_server(servicer, server):
                     servicer.GetTodaysActivityJson,
                     request_deserializer=utilities__pb2.TodaysActivityJsonRequest.FromString,
                     response_serializer=utilities__pb2.TodaysActivityJsonResponse.SerializeToString,
+            ),
+            'HealthCheck': grpc.unary_unary_rpc_method_handler(
+                    servicer.HealthCheck,
+                    request_deserializer=utilities__pb2.HealthCheckRequest.FromString,
+                    response_serializer=utilities__pb2.HealthCheckResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -458,5 +474,22 @@ class UtilityServices(object):
         return grpc.experimental.unary_unary(request, target, '/UtilityServices/GetTodaysActivityJson',
             utilities__pb2.TodaysActivityJsonRequest.SerializeToString,
             utilities__pb2.TodaysActivityJsonResponse.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+    @staticmethod
+    def HealthCheck(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/UtilityServices/HealthCheck',
+            utilities__pb2.HealthCheckRequest.SerializeToString,
+            utilities__pb2.HealthCheckResponse.FromString,
             options, channel_credentials,
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)

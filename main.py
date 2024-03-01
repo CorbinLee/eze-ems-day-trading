@@ -52,6 +52,11 @@ dotenv.load_dotenv()
 # Initialize lock
 lock = threading.Lock()
 
+# Status and response strings
+SUCCESS = 'SUCCESS'
+COMPLETED = 'COMPLETED'
+DELETED = 'DELETED'
+
 
 def print_info(obj, name):
     logging.info(f'{name}      - {obj}')
@@ -96,7 +101,7 @@ def login(util_stub, retry_count=5):
         logging.info(f'Attempting login for user: {user}, domain: {domain}, and locale: {locale}')
         connect_response_local = util_stub.Connect(util.ConnectRequest(UserName=user, Domain=domain, Password=password,
                                                                        Locale=locale))
-        if connect_response_local.Response == 'success':
+        if connect_response_local.Response.upper() == SUCCESS:
             logging.info(f'Successfully logged in, token={connect_response_local.UserToken} response='
                          f'{connect_response_local.Response}')
             return connect_response_local
@@ -111,24 +116,24 @@ def login(util_stub, retry_count=5):
                 time.sleep(delay_millis/1000)
 
 
-def get_order_id(util_stub, user_token, order_tag):
-    with lock:
-        activity_response = util_stub.GetTodaysActivityJson(
-            util.TodaysActivityJsonRequest(IncludeUserSubmitOrder=True, UserToken=user_token))
-    logging.info(f'activity_response type: {type(activity_response)}')
-    logging.info(f'activity_response str: {str(activity_response)}')
-    logging.info(f'activity_response: {activity_response}')
-    logging.info(f'activity_response.Acknowledgement: {activity_response.Acknowledgement}')
-    logging.info(f'activity_response.TodaysActivityJson: {activity_response.TodaysActivityJson}')
-    df = pd.read_json(activity_response.TodaysActivityJson, orient='records')
-    order_id = df.loc[df['OrderTag'] == order_tag]
-    for order in df:
-        logging.info(f'order type: {type(order)}')
-        logging.info(f'order str: {str(order)}')
-    logging.info(f'DF: \n{df}')
-    order_id = 'filler'
-    logging.info(f'Found order_id: {order_id} for tag: {order_tag}')
-    return order_id
+# def get_order_id(util_stub, user_token, order_tag):
+#     with lock:
+#         activity_response = util_stub.GetTodaysActivityJson(
+#             util.TodaysActivityJsonRequest(IncludeUserSubmitOrder=True, UserToken=user_token))
+#     logging.info(f'activity_response type: {type(activity_response)}')
+#     logging.info(f'activity_response str: {str(activity_response)}')
+#     logging.info(f'activity_response: {activity_response}')
+#     logging.info(f'activity_response.Acknowledgement: {activity_response.Acknowledgement}')
+#     logging.info(f'activity_response.TodaysActivityJson: {activity_response.TodaysActivityJson}')
+#     df = pd.read_json(activity_response.TodaysActivityJson, orient='records')
+#     order_id = df.loc[df['OrderTag'] == order_tag]
+#     for order in df:
+#         logging.info(f'order type: {type(order)}')
+#         logging.info(f'order str: {str(order)}')
+#     logging.info(f'DF: \n{df}')
+#     order_id = 'filler'
+#     logging.info(f'Found order_id: {order_id} for tag: {order_tag}')
+#     return order_id
 
 
 def get_order_details(util_stub, request, order_tag, retry_count=5) -> (bool, dict):
@@ -139,7 +144,7 @@ def get_order_details(util_stub, request, order_tag, retry_count=5) -> (bool, di
     for i in range(retry_count):
         with lock:
             activity_response = util_stub.GetTodaysActivityJson(request)
-        if activity_response.Acknowledgement.ServerResponse == 'success':
+        if activity_response.Acknowledgement.ServerResponse.upper() == SUCCESS:
             activity_df = pd.read_json(activity_response.TodaysActivityJson, orient='records')
             orders_by_tag = activity_df.loc[activity_df['OrderTag'] == order_tag]
             order_details = orders_by_tag.to_dict('records')
@@ -227,16 +232,13 @@ def submit_order(ord_stub, util_stub, symbol, side, quantity, route, account, or
         # For SELLSHORT orders, extended field SHORT_LOCATE_ID must be assigned. Value can be anything
         order_request.ExtendedFields['SHORT_LOCATE_ID'] = order_tag
     logging.info(f'Submitting {side} {price_type} order (OrderTag={order_tag}) for {quantity} shares of {symbol}')
-    # order_response = ord_stub.SubmitSingleOrder(order_request)
     for i in range(retry_count):
         with lock:
-            logging.info(f'lock acquired')
             logging.info(f'order_request: {order_request}')
             submit_order_response = ord_stub.SubmitSingleOrder(order_request)
             logging.info(f'submit_order_response for symbol [{symbol}]: {submit_order_response}')
-            logging.info(f'releasing lock...')
 
-        # if submit_order_response.ServerResponse == 'success':
+        # if submit_order_response.ServerResponse.upper() == SUCCESS:
         #     return True, submit_order_response
         # else:
         #     logging.warning(f'SubmitOrder attempt #{i + 1} failed: {submit_order_response}')
@@ -255,7 +257,7 @@ def submit_order(ord_stub, util_stub, symbol, side, quantity, route, account, or
             success, details = get_user_submit_order_details(util_stub, user_token, order_tag)
             if success:
                 if details is not None:
-                    if submit_order_response.ServerResponse == 'success':
+                    if submit_order_response.ServerResponse.upper() == SUCCESS:
                         logging.info(
                             f'Successfully submitted order with tag [{order_tag}] and ID [{details["OrderId"]}]')
                     else:
@@ -266,7 +268,7 @@ def submit_order(ord_stub, util_stub, symbol, side, quantity, route, account, or
                     logging.warning(f'Found no order details for tag [{order_tag}]. This was attempt #{j + 1}')
                     if j == retry_count - 1:
                         logging.info(f'All GetOrderDetails attempts returned empty for tag [{order_tag}]')
-                        if submit_order_response.ServerResponse == 'success':
+                        if submit_order_response.ServerResponse.upper() == SUCCESS:
                             logging.warning(
                                 f'Submit order call succeeded but no order was found with tag [{order_tag}]. '
                                 f'SubmitOrder response: {submit_order_response}.')
@@ -283,7 +285,7 @@ def submit_order(ord_stub, util_stub, symbol, side, quantity, route, account, or
 
             else:
                 logging.warning(f'GetOrderDetails failed with response: {details}')
-                if submit_order_response.ServerResponse == 'success':
+                if submit_order_response.ServerResponse.upper() == SUCCESS:
                     logging.warning(f'GetOrderDetails failed but SubmitOrder [tag={order_tag}] succeeded with response:'
                                     f' {submit_order_response}')
                     return True, None
@@ -310,7 +312,7 @@ def cancel_order(ord_stub, user_token, order_id):
         with lock:
             cancel_response = ord_stub.CancelSingleOrder(
                 ord.CancelSingleOrderRequest(OrderId=order_id, UserToken=user_token))
-        if cancel_response.ServerResponse == 'success':
+        if cancel_response.ServerResponse.upper() == SUCCESS:
             return cancel_response
         else:
             logging.info(f'Cancel order attempt #{i + 1} failed: {cancel_response}')
@@ -329,7 +331,7 @@ def get_order_status(ord_stub, user_token, order_id):
         with lock:
             ord_response = ord_stub.GetOrderDetailByOrderIdJson(
                 ord.OrderDetailByOrderIdJsonRequest(UserToken=user_token, OrderId=order_id))
-        if ord_response.Acknowledgement.ServerResponse == 'success':
+        if ord_response.Acknowledgement.ServerResponse.upper() == SUCCESS:
             return json.loads(ord_response.OrderDetail)[0]['CurrentStatus']
         else:
             logging.info(f'Get order details attempt #{i + 1} failed: {ord_response}')
@@ -348,7 +350,7 @@ def get_order_status(ord_stub, user_token, order_id):
 #         with lock:
 #             ord_response = ord_stub.GetOrderDetailByOrderIdJson(
 #                 ord.OrderDetailByOrderIdJsonRequest(UserToken=user_token, OrderId=order_id))
-#         if ord_response.Acknowledgement.ServerResponse == 'success':
+#         if ord_response.Acknowledgement.ServerResponse.upper() == SUCCESS:
 #             if json.loads(ord_response.OrderDetail)[0]['CurrentStatus'] is None:
 #                 logging.warning(f'Received empty OrderDetails object from server for OrderId={order_id}. Full '
 #                                 f'response: {ord_response}')
@@ -370,9 +372,9 @@ def get_order_status(ord_stub, user_token, order_id):
 def get_current_stock_price(md_stub, user_token, symbol, retry_count=5) -> (bool, float):
     for i in range(retry_count):
         with lock:
-            md_response = md_stub.GetLevel1MarketData(md.Level1MarketDataRequest(
-                Symbols=[symbol], Request=True, UserToken=user_token))
-        if md_response.Acknowledgement.ServerResponse == 'success':
+            md_response = md_stub.GetLevel1MarketData(md.Level1MarketDataRecordRequest(Symbols=[symbol],
+                                                                                       UserToken=user_token))
+        if md_response.Acknowledgement.ServerResponse.upper() == SUCCESS:
             return True, md_response.DataRecord[0].Trdprc1.DecimalValue
         else:
             logging.info(f'Get market data attempt #{i + 1} failed: {md_response}')
@@ -462,7 +464,7 @@ def log_heartbeat(md_stub, util_stub, user_token, order, entry_order_executed):
                             f'generating heartbeat. Response: {closing_order_details}')
     else:
         heartbeat_string += f'Closing order has not been submitted yet\n'
-    heartbeat_string += f'Order object: {order}\n'  # Todo: remove when testing is done as this isn't important to user
+    # heartbeat_string += f'Order object: {order}\n' # Todo: remove when testing is done as this isn't important to user
     logging.info(heartbeat_string)
 
 
@@ -506,6 +508,7 @@ def handle_order(channel, user_token, order):
         est_timezone = pytz.timezone('US/Eastern')
         # Heartbeat timer
         last_heartbeat = None
+        heartbeat_frequency_min = 5
 
         logging.info(f'Starting processing for order: {order}')
 
@@ -513,7 +516,7 @@ def handle_order(channel, user_token, order):
             now_est = datetime.datetime.now(est_timezone)
 
             # Log heartbeat every X minutes giving update on current status
-            if last_heartbeat is None or now_est >= last_heartbeat + datetime.timedelta(minutes=5):
+            if last_heartbeat is None or now_est > last_heartbeat + datetime.timedelta(minutes=heartbeat_frequency_min):
                 log_heartbeat(md_stub, util_stub, user_token, order, entry_order_executed)
                 last_heartbeat = now_est
 
@@ -528,10 +531,18 @@ def handle_order(channel, user_token, order):
                     logging.warning(f'Failed to get closing_order_details for symbol [{order.symbol}]. Waiting 5 '
                                     f'seconds before retrying...')
                     time.sleep(5)
-                elif closing_order_details['CurrentStatus'].upper() == 'COMPLETED':
+                    # Q: why no 'continue' here? what can be accomplished by executing the rest of the loop?
+                    #     A: market closing
+                elif closing_order_details['CurrentStatus'].upper() == COMPLETED:
                     logging.info(f'Closing order {order.closing_order_id} has completed for symbol {order.symbol}. '
                                  f'Finished all processing for this order. Exiting...')
                     break
+                elif closing_order_details['CurrentStatus'].upper() == DELETED:
+                    logging.warning(f'Closing order {order.closing_order_id} is in status DELETED, with reason: '
+                                    f'{closing_order_details["Reason"]}. Clearing this so a new closing order can be '
+                                    f'submitted.')
+                    order.closing_order_tag = None
+                    order.closing_order_id = None
 
             # Check time
             market_open = datetime.datetime(year=now_est.year, month=now_est.month, day=now_est.day, hour=9, minute=30,
@@ -561,7 +572,7 @@ def handle_order(channel, user_token, order):
                     logging.info(f'Cancelling entry order: {order.order_id}')
                     cancel_response = cancel_order(ord_stub=ord_stub, user_token=user_token, order_id=order.order_id)
                     logging.info(f'Cancel order response: {cancel_response}')
-                    if cancel_response.ServerResponse == 'success':
+                    if cancel_response.ServerResponse.upper() == SUCCESS:
                         logging.info(f'Successfully cancelled order: {order.order_id}. Exiting')
                     else:
                         logging.warning(f'Failed to cancel order: {order.order_id}. Please address manually!')
@@ -570,12 +581,12 @@ def handle_order(channel, user_token, order):
                 break
             elif now_est.time() > datetime.time(hour=15, minute=50, second=0):
                 logging.info('Reached 3:50pm ET and the entry order has been executed but potentially not closed out')
-                # Check for any open orders
+                # Check if a closing order has been submitted and not executed yet
                 if order.closing_order_tag:
                     success, closing_order_details = get_user_submit_order_details(util_stub, user_token,
                                                                                    order.closing_order_tag)
                     if success:
-                        if closing_order_details['CurrentStatus'].upper() != 'COMPLETED':
+                        if closing_order_details['CurrentStatus'].upper() != COMPLETED:
                             logging.info(f'Cancelling closing order [{order.closing_order_id}] as it is 3:50pm and it '
                                          f'is in status: {closing_order_details["CurrentStatus"]}')
                         else:
@@ -585,14 +596,16 @@ def handle_order(channel, user_token, order):
                             break
                     else:
                         logging.info(f'Failed to get closing order details. Server response: {closing_order_details}')
+                        logging.info(f'Attempting to cancel closing order as it has potentially not been completed')
                     # Try to cancel the order as it has potentially not completed
                     cancel_response = cancel_order(ord_stub=ord_stub, user_token=user_token,
                                                    order_id=order.closing_order_id)
-                    if cancel_response.ServerResponse == 'success':
-                        logging.info(f'Successfully cancelled order: {order.closing_order_id}')
+                    if cancel_response.ServerResponse.upper() == SUCCESS:
+                        logging.info(f'Successfully cancelled closing order: {order.closing_order_id}')
                         order.closing_order_tag = None
                     else:
                         logging.warning(f'Failed to cancel order: {order.closing_order_id}. Please address manually!')
+                # Now close out the order at market price since the market is about to close
                 side = 'SELL' if order.direction == OrderDirection.LONG else 'BUY'
                 price_type = 'Market'
                 logging.info(f'3:50pm reached and order for {order.symbol} has not closed out yet. Sending {side} '
@@ -619,7 +632,7 @@ def handle_order(channel, user_token, order):
                                     f'seconds before retrying...')
                     time.sleep(5)
                 # Check on order status
-                elif entry_order_details['CurrentStatus'].upper() == 'COMPLETED':
+                elif entry_order_details['CurrentStatus'].upper() == COMPLETED:
                     entry_order_executed = True
                     logging.info(f'Entry order has executed for [{order.symbol}]. Order details: {entry_order_details}')
                 else:
@@ -711,7 +724,7 @@ def handle_order(channel, user_token, order):
                                          f'{order.symbol}')
                             cancel_response = cancel_order(ord_stub=ord_stub, user_token=user_token,
                                                            order_id=order.closing_order_id)
-                            if cancel_response.ServerResponse.upper() == 'SUCCESS':
+                            if cancel_response.ServerResponse.upper() == SUCCESS:
                                 logging.info(f'Successfully cancelled order: {order.closing_order_id}')
                                 order.closing_order_tag = None
                             else:
@@ -757,8 +770,10 @@ def setup_test_orders(md_stub, user_token, order_info):
         half_target = round((entry_price + target_price) / 2, 2)
         near_target = round((half_target + target_price) / 2, 2)
         entry_limit = round((entry_price + half_target) / 2, 2) if has_entry_limit else None
+        # account = 'NEUTRAL;XAPI;XAPI;NEUTRAL'
+        account = 'TAL;TEST;EZEUAT;DEMO2'
         test_orders.append(
-            BracketOrder(route='DEMO', account='EMSTEST;EMSTEST;APIDEMO;DEMO07', symbol=symbol, quantity=3,
+            BracketOrder(route='DEMO', account=account, symbol=symbol, quantity=3,
                          direction=direction, entry_price=entry_price, stop_loss_price=stop_loss_price,
                          target_price=target_price, entry_limit=entry_limit,
                          half_target=half_target, near_target=near_target)
@@ -780,7 +795,8 @@ if __name__ == '__main__':
 
     with open(r'.\roots.pem', 'rb') as f:
         cert = f.read()
-    server = 'chixapi.taltrade.com'
+    # server = 'chixapi.taltrade.com'
+    server = 'EMSUATXAPI.taltrade.com'
     port = '9000'
     main_channel = grpc.secure_channel(f'{server}:{port}', grpc.ssl_channel_credentials(root_certificates=cert))
     logging.info(f'Channel: {main_channel}')
@@ -827,9 +843,9 @@ if __name__ == '__main__':
 
         orders = setup_test_orders(md_stub_main, connect_response.UserToken, [
             # ['BRO', .20],
-            ['PFGC', .15, OrderDirection.LONG, True],
-            ['CIEN', .20, OrderDirection.LONG, False],
-            ['BF.B', .20, OrderDirection.SHORT, True],
+            # ['PFGC', .15, OrderDirection.LONG, True],
+            ['CIEN', .15, OrderDirection.LONG, False],
+            # ['BF.B', .20, OrderDirection.SHORT, True],
             ['OKE', .15, OrderDirection.SHORT, False],
         ])
 
@@ -848,7 +864,7 @@ if __name__ == '__main__':
         #     user_token=connect_response.UserToken, closing_order=False, limit_price=order.entry_limit,
         #     stop_price=order.entry_price)
         # logging.info(f'Order result: {order_response}')
-        # if order_response.ServerResponse != 'success':
+        # if order_response.ServerResponse.upper() != SUCCESS:
         #     logging.warning('Entry order failed to submit')
 
         threads = [Thread(target=handle_order, args=(main_channel, connect_response.UserToken, order)) for order in orders]
@@ -861,7 +877,7 @@ if __name__ == '__main__':
     except Exception as e:
         logging.exception(f'Exception occurred of type: {type(e).__name__} with args: {e.args}')
     finally:
-        if connect_response and connect_response.Response == 'success':
+        if connect_response and connect_response.Response.upper() == SUCCESS:
             logging.info(f'Attempting to log out of account...')
             disconnect_response = util_stub_main.Disconnect(util.DisconnectRequest(UserToken=connect_response.UserToken))
             logging.info(f'Disconnect result: {disconnect_response.ServerResponse}')

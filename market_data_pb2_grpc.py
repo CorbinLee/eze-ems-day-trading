@@ -101,7 +101,7 @@ class MarketDataServiceStub(object):
                 )
         self.GetLevel1MarketData = channel.unary_unary(
                 '/MarketDataService/GetLevel1MarketData',
-                request_serializer=market__data__pb2.Level1MarketDataRequest.SerializeToString,
+                request_serializer=market__data__pb2.Level1MarketDataRecordRequest.SerializeToString,
                 response_deserializer=market__data__pb2.Level1MarketDataRecordResponse.FromString,
                 )
 
@@ -307,7 +307,7 @@ def add_MarketDataServiceServicer_to_server(servicer, server):
             ),
             'GetLevel1MarketData': grpc.unary_unary_rpc_method_handler(
                     servicer.GetLevel1MarketData,
-                    request_deserializer=market__data__pb2.Level1MarketDataRequest.FromString,
+                    request_deserializer=market__data__pb2.Level1MarketDataRecordRequest.FromString,
                     response_serializer=market__data__pb2.Level1MarketDataRecordResponse.SerializeToString,
             ),
     }
@@ -621,7 +621,7 @@ class MarketDataService(object):
             timeout=None,
             metadata=None):
         return grpc.experimental.unary_unary(request, target, '/MarketDataService/GetLevel1MarketData',
-            market__data__pb2.Level1MarketDataRequest.SerializeToString,
+            market__data__pb2.Level1MarketDataRecordRequest.SerializeToString,
             market__data__pb2.Level1MarketDataRecordResponse.FromString,
             options, channel_credentials,
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)

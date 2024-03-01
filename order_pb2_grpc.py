@@ -94,6 +94,11 @@ class SubmitOrderServiceStub(object):
                 request_serializer=order__pb2.OrderDetailByDateRangeJsonRequest.SerializeToString,
                 response_deserializer=order__pb2.OrderDetailByDateRangeJsonResponse.FromString,
                 )
+        self.GetOrderDetailByOrderTag = channel.unary_unary(
+                '/SubmitOrderService/GetOrderDetailByOrderTag',
+                request_serializer=order__pb2.OrderDetailByOrderTagRequest.SerializeToString,
+                response_deserializer=order__pb2.OrderDetailByOrderTagResponse.FromString,
+                )
 
 
 class SubmitOrderServiceServicer(object):
@@ -195,6 +200,12 @@ class SubmitOrderServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def GetOrderDetailByOrderTag(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_SubmitOrderServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -277,6 +288,11 @@ def add_SubmitOrderServiceServicer_to_server(servicer, server):
                     servicer.GetOrderDetailByDateRangeJson,
                     request_deserializer=order__pb2.OrderDetailByDateRangeJsonRequest.FromString,
                     response_serializer=order__pb2.OrderDetailByDateRangeJsonResponse.SerializeToString,
+            ),
+            'GetOrderDetailByOrderTag': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetOrderDetailByOrderTag,
+                    request_deserializer=order__pb2.OrderDetailByOrderTagRequest.FromString,
+                    response_serializer=order__pb2.OrderDetailByOrderTagResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -557,5 +573,22 @@ class SubmitOrderService(object):
         return grpc.experimental.unary_stream(request, target, '/SubmitOrderService/GetOrderDetailByDateRangeJson',
             order__pb2.OrderDetailByDateRangeJsonRequest.SerializeToString,
             order__pb2.OrderDetailByDateRangeJsonResponse.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+    @staticmethod
+    def GetOrderDetailByOrderTag(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/SubmitOrderService/GetOrderDetailByOrderTag',
+            order__pb2.OrderDetailByOrderTagRequest.SerializeToString,
+            order__pb2.OrderDetailByOrderTagResponse.FromString,
             options, channel_credentials,
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
