@@ -1,6 +1,6 @@
 import json
 import threading
-
+import sys
 import grpc
 import utilities_pb2 as util
 import utilities_pb2_grpc as util_grpc
@@ -23,6 +23,7 @@ import pandas as pd
 from bracket_order import OrderDirection
 from bracket_order import OrderType
 from bracket_order import BracketOrder
+from order_csv_reader import OrderCsvReader
 from google.protobuf.wrappers_pb2 import DoubleValue
 
 
@@ -116,26 +117,6 @@ def login(util_stub, retry_count=5):
                 time.sleep(delay_millis/1000)
 
 
-# def get_order_id(util_stub, user_token, order_tag):
-#     with lock:
-#         activity_response = util_stub.GetTodaysActivityJson(
-#             util.TodaysActivityJsonRequest(IncludeUserSubmitOrder=True, UserToken=user_token))
-#     logging.info(f'activity_response type: {type(activity_response)}')
-#     logging.info(f'activity_response str: {str(activity_response)}')
-#     logging.info(f'activity_response: {activity_response}')
-#     logging.info(f'activity_response.Acknowledgement: {activity_response.Acknowledgement}')
-#     logging.info(f'activity_response.TodaysActivityJson: {activity_response.TodaysActivityJson}')
-#     df = pd.read_json(activity_response.TodaysActivityJson, orient='records')
-#     order_id = df.loc[df['OrderTag'] == order_tag]
-#     for order in df:
-#         logging.info(f'order type: {type(order)}')
-#         logging.info(f'order str: {str(order)}')
-#     logging.info(f'DF: \n{df}')
-#     order_id = 'filler'
-#     logging.info(f'Found order_id: {order_id} for tag: {order_tag}')
-#     return order_id
-
-
 def get_order_details(util_stub, request, order_tag, retry_count=5) -> (bool, dict):
     """
     Gets orders placed today that match the given order_tag
@@ -194,7 +175,6 @@ def get_exchange_trade_order_details(util_stub, user_token, order_tag) -> (bool,
 def submit_order(ord_stub, util_stub, symbol, side, quantity, route, account, order_tag, price_type, user_token,
                  closing_order, limit_price=None, stop_price=None, retry_count=5) -> (bool, dict):
 
-    # todo dont even make the call if it has invalid params
     if price_type == 'Limit' or price_type == 'StopLimit':
         if not limit_price:
             logging.error(f'Submitting {price_type} trade without setting limit price')
@@ -209,25 +189,13 @@ def submit_order(ord_stub, util_stub, symbol, side, quantity, route, account, or
     limit_price = DoubleValue(value=limit_price) if limit_price else None
     stop_price = DoubleValue(value=stop_price) if stop_price else None
 
-    # ReturnResult is a parameter that tells the server to return the submitted order details in the response. However,
-    # in testing this input seemed to be buggy, either causing a timeout ('Timed out waiting for Streaming Event'), or
-    # returning the details of a different order than the one that was submitted. Setting this to false for now but in
-    # the future if this is fixed it would more convenient way of getting order ID than making a separate service call
-    return_result = True
-
-    # logging.info(f'Stop price: {stop_price}')
-    # logging.info(f'Stop price type: {type(stop_price)}')
     order_request = ord.SubmitSingleOrderRequest(Symbol=symbol, Side=side, Quantity=quantity, Route=route,
                                                  Account=account, OrderTag=order_tag, UserToken=user_token,
-                                                 Price=limit_price, StopPrice=stop_price, ReturnResult=return_result,
+                                                 Price=limit_price, StopPrice=stop_price, ReturnResult=True,
                                                  PriceType=price_type_enum)
     # Extended field TO_OPEN_POS should be 100 for buy to open and sell short orders and 101 for buy to close and sell
     # long orders
     order_request.ExtendedFields['TO_OPEN_POS'] = '100' if not closing_order else '101'
-    # Setting PriceType through the extended field rather than the SubmitSingleOrderRequest param because the param
-    # asked for a PriceTypeEnum value, and I wasn't able to figure out how to give it that
-    # order_request.ExtendedFields['PRICE_TYPE'] = price_type
-    # order_request.ExtendedFields['RETURN_RESULT'] = 'True'
     if side == 'SELLSHORT':
         # For SELLSHORT orders, extended field SHORT_LOCATE_ID must be assigned. Value can be anything
         order_request.ExtendedFields['SHORT_LOCATE_ID'] = order_tag
@@ -237,19 +205,6 @@ def submit_order(ord_stub, util_stub, symbol, side, quantity, route, account, or
             logging.info(f'order_request: {order_request}')
             submit_order_response = ord_stub.SubmitSingleOrder(order_request)
             logging.info(f'submit_order_response for symbol [{symbol}]: {submit_order_response}')
-
-        # if submit_order_response.ServerResponse.upper() == SUCCESS:
-        #     return True, submit_order_response
-        # else:
-        #     logging.warning(f'SubmitOrder attempt #{i + 1} failed: {submit_order_response}')
-        #     if i == retry_count - 1:
-        #         logging.info('All SubmitOrder attempts failed')
-        #         return False, submit_order_response
-        #     else:
-        #         delay_millis = 500 * 2 ** (i + 1)  # Exponential delay for each retry
-        #         logging.info(f'Retrying SubmitOrder after {delay_millis} milliseconds...')
-        #         time.sleep(delay_millis / 1000)
-        #         logging.info(f'Retrying SubmitOrder (OrderTag={order_tag}) now')
 
         # Now query the server for order details, retrying after a delay if no order is found to give the system time
         # to propagate the order
@@ -294,18 +249,6 @@ def submit_order(ord_stub, util_stub, symbol, side, quantity, route, account, or
                     return False, submit_order_response
 
 
-# def submit_order_and_get_details(ord_stub, util_stub, symbol, side, quantity, route, account, order_tag, price_type,
-#                                  user_token, closing_order, limit_price=None, stop_price=None) -> (bool, dict):
-#     """
-#     Helper method to retry get_order_details with delays in case no order is found but the submit order call succeeds
-#     :return:
-#     """
-#     success, response = submit_order(ord_stub, util_stub, symbol, side, quantity, route, account, order_tag, price_type,
-#                                      user_token, closing_order, limit_price, stop_price)
-#
-#     success, details = get_order_details_by_order_tag(util_stub, user_token, order_tag)
-
-
 def cancel_order(ord_stub, user_token, order_id):
     retry_count = 5
     for i in range(retry_count):
@@ -344,31 +287,6 @@ def get_order_status(ord_stub, user_token, order_id):
                 time.sleep(delay_millis / 1000)
 
 
-# def get_order_details(ord_stub, user_token, order_id) -> (bool, dict):
-#     retry_count = 5
-#     for i in range(retry_count):
-#         with lock:
-#             ord_response = ord_stub.GetOrderDetailByOrderIdJson(
-#                 ord.OrderDetailByOrderIdJsonRequest(UserToken=user_token, OrderId=order_id))
-#         if ord_response.Acknowledgement.ServerResponse.upper() == SUCCESS:
-#             if json.loads(ord_response.OrderDetail)[0]['CurrentStatus'] is None:
-#                 logging.warning(f'Received empty OrderDetails object from server for OrderId={order_id}. Full '
-#                                 f'response: {ord_response}')
-#             else:
-#                 if len(json.loads(ord_response.OrderDetail)) > 1:
-#                     logging.error(f'Found more than one order for order ID [{order_id}]: {len(json.loads(ord_response.OrderDetail))}\n '
-#                                   f'Orders: {json.loads(ord_response.OrderDetail)}')
-#                 return True, json.loads(ord_response.OrderDetail)[0]
-#         logging.info(f'Get order details attempt #{i + 1} failed: {ord_response}')
-#         if i == retry_count - 1:
-#             logging.info('All Get order details attempts failed')
-#             return False, None
-#         else:
-#             delay_millis = 500 * 2 ** (i + 1)  # Exponential delay for each retry
-#             logging.info(f'Retrying Get order details after {delay_millis} milliseconds')
-#             time.sleep(delay_millis / 1000)
-
-
 def get_current_stock_price(md_stub, user_token, symbol, retry_count=5) -> (bool, float):
     for i in range(retry_count):
         with lock:
@@ -377,7 +295,7 @@ def get_current_stock_price(md_stub, user_token, symbol, retry_count=5) -> (bool
         if md_response.Acknowledgement.ServerResponse.upper() == SUCCESS:
             return True, md_response.DataRecord[0].Trdprc1.DecimalValue
         else:
-            logging.info(f'Get market data attempt #{i + 1} failed: {md_response}')
+            logging.info(f'Get market data attempt #{i + 1} failed: {md_response.Acknowledgement}')
             if i == retry_count - 1:
                 logging.info('All Get market data attempts failed')
                 return False, None
@@ -565,7 +483,7 @@ def handle_order(channel, user_token, order):
                 else:
                     logging.info('Market has closed for the day. Try again tomorrow...')
                     break
-            elif now_est.time() > datetime.time(hour=15, minute=40, second=0) and not entry_order_executed: # Fixme rest to 3pm
+            elif now_est.time() > datetime.time(hour=15, minute=0, second=0) and not entry_order_executed:
                 logging.info('Reached 3pm EST without entry order executing')
                 if order.order_tag:
                     # Cancel entry order
@@ -730,7 +648,6 @@ def handle_order(channel, user_token, order):
                             else:
                                 logging.warning(f'Failed to cancel order: {order.closing_order_id}. Please address!')
                         side = 'SELL' if order.direction == OrderDirection.LONG else 'BUY'
-                        # TODO Make default to Market, and limit only if entered
                         price_type = 'Limit' if order.stop_loss_order_type == OrderType.LIMIT else 'Market'
                         limit_price = order.stop_loss_price if order.stop_loss_order_type == OrderType.LIMIT else None
                         logging.info(f'Sending {side} {price_type} order to close out (at stop loss)')
@@ -773,25 +690,26 @@ def setup_test_orders(md_stub, user_token, order_info):
         # account = 'NEUTRAL;XAPI;XAPI;NEUTRAL'
         account = 'TAL;TEST;EZEUAT;DEMO2'
         test_orders.append(
-            BracketOrder(route='DEMO', account=account, symbol=symbol, quantity=3,
-                         direction=direction, entry_price=entry_price, stop_loss_price=stop_loss_price,
-                         target_price=target_price, entry_limit=entry_limit,
-                         half_target=half_target, near_target=near_target)
+            BracketOrder(route='DEMO', account=account, symbol=symbol, quantity=3, direction=direction,
+                         entry_price=entry_price, stop_loss_price=stop_loss_price, stop_loss_order_type=OrderType.LIMIT,
+                         target_price=target_price, entry_limit=entry_limit, half_target=half_target,
+                         near_target=near_target)
         )
     return test_orders
 
 
+def get_orders_from_csv(account):
+    if len(sys.argv) > 1:
+        order_file_name = sys.argv[1]
+    else:
+        order_file_name = f'{trading_day}_orders.csv'
+    logging.info('Test log')
+    return OrderCsvReader(f'input_orders/{order_file_name}').read_orders(account=account)
+
+
 if __name__ == '__main__':
-    # Read in file
-    # load each trade into an array of BracketOrders
-    # orders = []
-    # Use time in force of day or day plus?
-    # Only can use Stop limit order
-    # orders.append(
-    #     BracketOrder(route='DEMO', account='EMSTEST;EMSTEST;EMSUAT;XAPITEST001', symbol='DOW', quantity=3,
-    #                  direction=OrderDirection.LONG, entry_price=53.42, stop_loss_price=53.39, target_price=53.48,
-    #                  entry_order_type=OrderType.MARKET, entry_limit=None, half_target=53.45, near_target=53.47)
-    # )
+    # Get bracket orders from input CSV file
+    orders = get_orders_from_csv(get_from_env_or_input('EZE_EMS_ACCOUNT', 'Account'))
 
     with open(r'.\roots.pem', 'rb') as f:
         cert = f.read()
@@ -807,65 +725,15 @@ if __name__ == '__main__':
         connect_response = login(util_stub=util_stub_main)
 
         md_stub_main = md_grpc.MarketDataServiceStub(main_channel)
-        # ord_stub_main = ord_grpc.SubmitOrderServiceStub(channel)
 
-        # aapl_tag = str(uuid.uuid4())
-        # response_AAPL = ord_stub_main.SubmitSingleOrder(
-        #     ord.SubmitSingleOrderRequest(Symbol='AAPL', Side='BUY', Quantity=3, Route='DEMO', OrderTag=aapl_tag,
-        #                                  Account='EMSTEST;EMSTEST;EMSUAT;XAPITEST001',
-        #                                  UserToken=connect_response.UserToken, ReturnResult=False)
-        # )
-        # logging.info(f'response_AAPL {aapl_tag}: {response_AAPL}')
-        #
-        # amzn_tag = str(uuid.uuid4())
-        # response_AMZN = ord_stub_main.SubmitSingleOrder(
-        #     ord.SubmitSingleOrderRequest(Symbol='AMZN', Side='BUY', Quantity=3, Route='DEMO', OrderTag=amzn_tag,
-        #                                  Account='EMSTEST;EMSTEST;EMSUAT;XAPITEST001',
-        #                                  UserToken=connect_response.UserToken, ReturnResult=False)
-        # )
-        # logging.info(f'response_AMZN {amzn_tag}: {response_AMZN}')
-
-        # activity_response = util_stub_main.GetTodaysActivityJson(
-        #     util.TodaysActivityJsonRequest(IncludeUserSubmitOrder=True, UserToken=connect_response.UserToken))
-        #
-        # df = pd.read_json(activity_response.TodaysActivityJson, orient='records')
-        # order_details = df.loc[df['OrderTag'] == '881acbd1-b209-444d-8d00-67c013bdf03a']
-        # orders_details = order_details.to_dict('records')
-        #
-        # logging.info(f'df index: {df.index}')
-        # logging.info(f'df columns: {df.columns}')
-        # print_info(order_details, 'order_details')
-        # logging.info(f'orders_details len: {len(orders_details)}')
-        # logging.info(f'orders_details: {orders_details}')
-        # print_info(orders_details[0]['AveragePrice'], 'ave price')
-        #
-        # raise Exception('Ending early...')
-
+        # Test order setup
         orders = setup_test_orders(md_stub_main, connect_response.UserToken, [
             # ['BRO', .20],
-            # ['PFGC', .15, OrderDirection.LONG, True],
+            ['PFGC', .15, OrderDirection.LONG, True],
             ['CIEN', .15, OrderDirection.LONG, False],
-            # ['BF.B', .20, OrderDirection.SHORT, True],
+            ['BF.B', .20, OrderDirection.SHORT, True],
             ['OKE', .15, OrderDirection.SHORT, False],
         ])
-
-        # order = BracketOrder(
-        #     route='DEMO', account='EMSTEST;EMSTEST;EMSUAT;XAPITEST001', symbol='AGR', quantity=3,
-        #     direction=OrderDirection.LONG, entry_price=35.10, stop_loss_price=34.70, target_price=35.69,
-        #     entry_order_type=OrderType.MARKET, entry_limit=None, half_target=35.37, near_target=35.59)
-        # ord_stub = ord_grpc.SubmitOrderServiceStub(channel)
-        # side = 'BUY' if order.direction == OrderDirection.LONG else 'SELLSHORT'
-        # price_type = 'StopLimit' if order.entry_limit else 'StopMarket'
-        # logging.info(f'Submitting {side} {price_type} entry order for {order.symbol}')
-        # order.order_tag = str(uuid.uuid4())
-        # order_response = submit_order(
-        #     ord_stub=ord_stub, symbol=order.symbol, side=side, quantity=order.quantity,
-        #     route=order.route, account=order.account, order_tag=order.order_tag, price_type=price_type,
-        #     user_token=connect_response.UserToken, closing_order=False, limit_price=order.entry_limit,
-        #     stop_price=order.entry_price)
-        # logging.info(f'Order result: {order_response}')
-        # if order_response.ServerResponse.upper() != SUCCESS:
-        #     logging.warning('Entry order failed to submit')
 
         threads = [Thread(target=handle_order, args=(main_channel, connect_response.UserToken, order)) for order in orders]
         for thread in threads:

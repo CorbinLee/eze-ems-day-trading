@@ -12,11 +12,33 @@ class OrderDirection(Enum):
     SHORT = 2
 
 
+def validate_type(value, name, expected_types):
+    if not isinstance(value, expected_types):
+        raise TypeError(f'{name} argument type should be {expected_types} but is: {type(value)}')
+
+
+def validate_fields(route, account, symbol, quantity, direction, entry_price, stop_loss_price, stop_loss_order_type,
+                    target_price, half_target, near_target, entry_limit):
+    validate_type(route, 'route', str)
+    validate_type(account, 'account', str)
+    validate_type(symbol, 'symbol', str)
+    validate_type(quantity, 'quantity', int)
+    validate_type(direction, 'direction', OrderDirection)
+    validate_type(entry_price, 'entry_price', (int, float))
+    validate_type(stop_loss_price, 'stop_loss_price', (int, float))
+    validate_type(stop_loss_order_type, 'stop_loss_order_type', OrderType)
+    validate_type(target_price, 'target_price', (int, float))
+    validate_type(half_target, 'half_target', (int, float))
+    validate_type(near_target, 'near_target', (int, float))
+    if entry_limit is not None:
+        validate_type(entry_limit, 'entry_limit', (int, float))
+
+
 class BracketOrder:
     """Class representing a bracket order"""
 
-    def __init__(self, route, account, symbol, quantity, direction, entry_price, stop_loss_price, target_price,
-                 stop_loss_order_type=OrderType.LIMIT, entry_limit=None, half_target=None, near_target=None):
+    def __init__(self, route, account, symbol, quantity, direction, entry_price, stop_loss_price, stop_loss_order_type,
+                 target_price, half_target, near_target, entry_limit=None):
         """
         :param route: Route name as shown in Eze EMS (i.e.  ARCA-LS, NYSE-LS, etc.)
         :param account: Semi colon separated values that represent the account this trade is for (i.e. TAL;TEST;USER1;TRADE)
@@ -28,11 +50,11 @@ class BracketOrder:
         :param target_price: Target price which will be the price at the top of the bracket order
         :param entry_limit: Limit price for the entry order. If None, entry order will be at market price
         :param stop_loss_order_type: Type of order to make for the stop-loss order (LIMIT or MARKET)
-        :param half_target: Optional parameter representing the first point where the stop-loss should be moved if
-            reached, usually halfway between the entry and target prices
-        :param near_target: Optional parameter representing the second point where the stop-loss should be moved if
-            reached, usually $0.10 to the target price
+        :param half_target: The first point where the stop-loss should be moved if reached, usually halfway between the entry and target prices
+        :param near_target: The second point where the stop-loss should be moved if reached, usually $0.10 to the target price
         """
+        validate_fields(route, account, symbol, quantity, direction, entry_price, stop_loss_price, stop_loss_order_type,
+                        target_price, half_target, near_target, entry_limit)
         self.route = route
         self.account = account
         self.symbol = symbol
@@ -43,9 +65,7 @@ class BracketOrder:
         self.target_price = target_price
         self.entry_limit = entry_limit
         self.stop_loss_order_type = stop_loss_order_type
-        # todo do math automaticlaly
         self.half_target = half_target
-        # todo do math automaticlaly $0.10 to target
         self.near_target = near_target
         # Unique tag used to identify this order
         self.order_tag = None
@@ -64,3 +84,6 @@ class BracketOrder:
                f'half_target={self.half_target},near_target={self.near_target},order_tag={self.order_tag},' \
                f'order_id={self.order_id},closing_order_tag={self.closing_order_tag},' \
                f'closing_order_id={self.closing_order_id})'
+
+    def __repr__(self):
+        return str(self)
