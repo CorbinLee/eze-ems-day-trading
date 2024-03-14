@@ -687,8 +687,8 @@ if __name__ == '__main__':
 
     with open(r'.\roots.pem', 'rb') as f:
         cert = f.read()
-    server = 'chixapi.taltrade.com'
-    port = '9000'
+    server = get_from_env_or_input('EZE_EMS_SERVER', 'Server')
+    port = get_from_env_or_input('EZE_EMS_PORT', 'Port')
     main_channel = grpc.secure_channel(f'{server}:{port}', grpc.ssl_channel_credentials(root_certificates=cert))
     logging.info(f'Channel: {main_channel}')
     util_stub_main = util_grpc.UtilityServicesStub(main_channel)
