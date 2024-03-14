@@ -22,7 +22,6 @@ import pandas as pd
 
 from bracket_order import OrderDirection
 from bracket_order import OrderType
-from bracket_order import BracketOrder
 from order_csv_reader import OrderCsvReader
 from google.protobuf.wrappers_pb2 import DoubleValue
 
@@ -673,31 +672,6 @@ def handle_order(channel, user_token, order):
                           f'{type(e).__name__} with args: {e.args}')
 
 
-def setup_test_orders(md_stub, user_token, order_info):
-    test_orders = []
-    for info in order_info:
-        symbol = info[0]
-        margin = info[1]
-        direction = info[2]
-        has_entry_limit = info[3]
-        success, current_price = get_current_stock_price(md_stub, user_token, symbol)
-        entry_price = round(current_price + 0.02 if direction == OrderDirection.LONG else current_price - 0.02, 2)
-        stop_loss_price = round(entry_price - margin if direction == OrderDirection.LONG else current_price + margin, 2)
-        target_price = round(entry_price + margin if direction == OrderDirection.LONG else current_price - margin, 2)
-        half_target = round((entry_price + target_price) / 2, 2)
-        near_target = round((half_target + target_price) / 2, 2)
-        entry_limit = round((entry_price + half_target) / 2, 2) if has_entry_limit else None
-        # account = 'NEUTRAL;XAPI;XAPI;NEUTRAL'
-        account = 'TAL;TEST;EZEUAT;DEMO2'
-        test_orders.append(
-            BracketOrder(route='DEMO', account=account, symbol=symbol, quantity=3, direction=direction,
-                         entry_price=entry_price, stop_loss_price=stop_loss_price, stop_loss_order_type=OrderType.LIMIT,
-                         target_price=target_price, entry_limit=entry_limit, half_target=half_target,
-                         near_target=near_target)
-        )
-    return test_orders
-
-
 def get_orders_from_csv(account):
     if len(sys.argv) > 1:
         order_file_name = sys.argv[1]
@@ -713,8 +687,7 @@ if __name__ == '__main__':
 
     with open(r'.\roots.pem', 'rb') as f:
         cert = f.read()
-    # server = 'chixapi.taltrade.com'
-    server = 'EMSUATXAPI.taltrade.com'
+    server = 'chixapi.taltrade.com'
     port = '9000'
     main_channel = grpc.secure_channel(f'{server}:{port}', grpc.ssl_channel_credentials(root_certificates=cert))
     logging.info(f'Channel: {main_channel}')
@@ -725,15 +698,6 @@ if __name__ == '__main__':
         connect_response = login(util_stub=util_stub_main)
 
         md_stub_main = md_grpc.MarketDataServiceStub(main_channel)
-
-        # Test order setup
-        orders = setup_test_orders(md_stub_main, connect_response.UserToken, [
-            # ['BRO', .20],
-            ['PFGC', .15, OrderDirection.LONG, True],
-            ['CIEN', .15, OrderDirection.LONG, False],
-            ['BF.B', .20, OrderDirection.SHORT, True],
-            ['OKE', .15, OrderDirection.SHORT, False],
-        ])
 
         threads = [Thread(target=handle_order, args=(main_channel, connect_response.UserToken, order)) for order in orders]
         for thread in threads:
