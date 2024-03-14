@@ -1,5 +1,6 @@
 .env
 logs/
+instructions/
 input_orders/*
 Realtick_API_project_notes
 old_protos/
