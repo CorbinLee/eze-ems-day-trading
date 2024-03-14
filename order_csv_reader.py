@@ -17,16 +17,14 @@ class OrderCsvReader:
         self.filepath = filepath
 
     def read_orders(self, account):
+        logging.info(f'Reading in orders from {self.filepath}')
         orders_df = pd.read_csv(self.filepath)
         # Replace NaN values with None
-        pd.set_option('display.max_columns', None)  # todo remove
         orders_df.replace(math.nan, None, inplace=True)
         # Convert strings to enums
-        logging.info(orders_df)
-        orders_df['Direction'] = orders_df['Direction'].apply(lambda x: OrderDirection[x])
+        orders_df['Direction'] = orders_df['Direction'].apply(lambda x: OrderDirection[x.upper()])
         orders_df['Stop Loss Order Type'] = orders_df['Stop Loss Order Type'].apply(
-            lambda x: OrderType.LIMIT if x is None else OrderType[x])
-        logging.info(orders_df)
+            lambda x: OrderType.LIMIT if x is None else OrderType[x.upper()])
         csv_orders = []
         for i, row in orders_df.iterrows():
             if row['Half Target Price'] is None:
@@ -39,10 +37,10 @@ class OrderCsvReader:
                     0.10 if row['Direction'] == OrderDirection.LONG else -0.10)
 
             csv_orders.append(
-                BracketOrder(account=account, route=row['Route'], symbol=row['Symbol'], quantity=row['Quantity'],
+                BracketOrder(account=account, route=row['Route'], symbol=row['Symbol'].upper(), quantity=row['Quantity'],
                              direction=row['Direction'], entry_price=row['Entry Price'], entry_limit=row['Entry Limit'],
                              stop_loss_price=row['Stop Loss Price'], stop_loss_order_type=row['Stop Loss Order Type'],
                              target_price=row['Target Price'], half_target=row['Half Target Price'],
                              near_target=row['Near Target Price']))
-            logging.info(csv_orders[-1])
+            logging.info(f'Read order from CSV: {csv_orders[-1]}')
         return csv_orders
