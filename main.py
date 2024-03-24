@@ -697,8 +697,6 @@ if __name__ == '__main__':
     try:
         connect_response = login(util_stub=util_stub_main)
 
-        md_stub_main = md_grpc.MarketDataServiceStub(main_channel)
-
         threads = [Thread(target=handle_order, args=(main_channel, connect_response.UserToken, order)) for order in orders]
         for thread in threads:
             thread.start()
